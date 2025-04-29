@@ -1,0 +1,10 @@
+<launch>
+    <!-- Launch stonefish simulation -->
+    <include file="$(find planning)/launch/stonefish.launch" />
+
+    <!-- Run frontier exploration node -->
+    <node pkg="planning" type="frontier_exploration.py" name="frontier_detector" output="screen" launch-prefix="python3" />
+
+    <!-- Run online planning node -->
+    <node pkg="planning" type="planner_node.py" name="online_planner" output="screen" launch-prefix="python3" />
+</launch>
