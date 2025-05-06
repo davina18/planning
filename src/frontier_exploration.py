@@ -27,7 +27,6 @@ class FrontierDetector:
         self.current_clusters = None          # currently detected frontier cluseters
         self.visited_goals = set()
         self.visited_radius = 0.5             # meters
-        #self.bounds = {'xmin': -2.0, 'xmax': 2.0, 'ymin': -2.0, 'ymax': 2.0} # virtual boundaries
 
         # Subscribers
         self.map_sub = rospy.Subscriber('/projected_map', OccupancyGrid, self.get_map, queue_size=10)
@@ -61,10 +60,10 @@ class FrontierDetector:
         ]
     
     # Checks whether a point (x, y) is within a bounding box
-    def is_within_bounds(self, world_point, bounds=5.0):
+    def is_within_bounds(self, world_point):
         x, y = world_point
-        return -bounds <= x <= bounds and -bounds <= y <= bounds
-
+        return (self.bounds['xmin'] <= x <= self.bounds['xmax'] and
+                self.bounds['ymin'] <= y <= self.bounds['ymax'])
 
 #------------------------------------------- Callback Functions ----------------------------------------------#
 
@@ -77,6 +76,20 @@ class FrontierDetector:
         data = np.array(msg.data).reshape((height, width))
         self.map = data.T # transpose to match the map coord system
         self.svc.set(self.map, self.resolution, self.origin)
+
+        map_centre = self.origin + np.array([
+            (msg.info.width * self.resolution) / 2.0,
+            (msg.info.height * self.resolution) / 2.0
+        ])
+        bound_half_size = 2.0  # half the size of the bounding box
+
+        # Centre the bounding box around the map centre
+        self.bounds = {
+            'xmin': map_centre[0] - bound_half_size,
+            'xmax': map_centre[0] + bound_half_size,
+            'ymin': map_centre[1] - bound_half_size,
+            'ymax': map_centre[1] + bound_half_size
+        }
 
     # Callback to get the odometry
     def get_odom(self, odom):
@@ -320,7 +333,7 @@ class FrontierDetector:
         best_gain = -np.inf
 
         candidate_viewpoints = [cluster.centroid] # add the centroid as a candidate viewpoint
-        for _ in range(10):  # add 5 random points inside the cluster as candidate viewpoints
+        for _ in range(10):  # add 10 random points inside the cluster as candidate viewpoints
             if len(cluster.coords) > 0:
                 random_idx = np.random.randint(0, len(cluster.coords))
                 candidate_viewpoints.append(cluster.coords[random_idx])
@@ -341,6 +354,10 @@ class FrontierDetector:
     # Publish a valid goal
     def publish_valid_goal(self, map_point, max_attempts=3):
         world_point = self.map_to_world(map_point)
+        # Check if goal is outside the virtual bounding box
+        #if not self.is_within_bounds(world_point):
+        #    rospy.loginfo(f"[PUBLISH GOAL] Goal out of bounds: {world_point}")
+        #    return False
         # Check if goal is within radius of any previously visited point
         for visited in self.visited_goals:
             visited_np = np.array(visited)
