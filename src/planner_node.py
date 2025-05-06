@@ -69,8 +69,7 @@ class OnlinePlanner:
 #------------------------------------------- Callback Functions ----------------------------------------------#
 
     # Callback to get the odometry
-    def get_odom(self, odom): # !!! Should this be in planner_node.py and frontier_exploration.py?
-
+    def get_odom(self, odom):
         # Convert the quarternion to a yaw angle
         _, _, yaw = tf.transformations.euler_from_quaternion([
             odom.pose.pose.orientation.x, 
@@ -98,10 +97,10 @@ class OnlinePlanner:
                 self.at_goal = False
                 self.atgoal_pub.publish(Bool(data=False)) # goal not reached yet
             else:
-                rospy.logwarn("[GOAL] Invalid goal, finding alternative") # !!!
+                rospy.logwarn("[GOAL] Invalid goal, finding alternative")
                 self.goal = self.svc.find_alternative_goal(self.goal)
                 if self.goal:
-                    rospy.loginfo(f"[GOAL] Alternative goal found: {self.goal}") # !!!
+                    rospy.loginfo(f"[GOAL] Alternative goal found: {self.goal}")
                     self.path = []
                     self.path = self.plan()
                     self.at_goal = False
@@ -109,12 +108,11 @@ class OnlinePlanner:
                     goal_reached_msg.data = self.at_goal
                     self.atgoal_pub.publish(goal_reached_msg)
                 else:
-                    rospy.logerr("[GOAL] Failed to find alternative goal") # !!!
+                    rospy.logerr("[GOAL] Failed to find alternative goal")
                     self.atgoal_pub.publish(Bool(data=True))
 
     # Callback to check path validity when a new occupancy grid map is received
     def get_gridmap(self, gridmap):
-
         if self.current_pose is None:
             return  # wait until odometry is received
         
@@ -131,6 +129,7 @@ class OnlinePlanner:
                 # If that path is invalid, replan a new path
                 if not self.svc.check_path(path):
                     rospy.logwarn("[MAP] Path invalid. Replanning.")
+                    self.__send_command__(0, 0)
                     self.path = []
                     self.at_goal = False
                     goal_reached_msg = Bool()
@@ -150,16 +149,15 @@ class OnlinePlanner:
 #------------------------------------------- Fallback Functions ----------------------------------------------#
 
     # Safety mechanism to check if the robot is stuck !!! is this necessary?
-    def check_again(self):
-        if not self.svc.is_valid(self.current_pose[0:2]): # if current pose is invalid
-            rospy.logwarn("Invalid current position, obstacle ahead")
-            start = time.time()
-            while time.time() - start < 1.0:  # move backward for 1 second
-                self.__send_command__(-0.8, 0.0)
-            self.__send_command__(0.0, 0.0)
-            del self.path[:]
-            self.plan() # replan a new path
-
+    #def check_again(self):
+    #    if not self.svc.is_valid(self.current_pose[0:2]): # if current pose is invalid
+    #        rospy.logwarn("Invalid current position, obstacle ahead")
+    #        start = time.time()
+    #        while time.time() - start < 1.0:  # move backward for 1 second
+    #            self.__send_command__(-0.8, 0.0)
+    #        self.__send_command__(0.0, 0.0)
+    #        del self.path[:]
+    #        self.plan() # replan a new path
 
     # Choose another goal along the path
     def new_goal_in_path(self, path, index=-1):
@@ -181,14 +179,14 @@ class OnlinePlanner:
 
     # Compute valid path from current pose to goal
     def plan(self):
+        rospy.loginfo(f"[PLAN] Planning a path.")
         for i in range(6): # try to compute a valid path 6 times
             try:
                 path = compute_path(self.current_pose[:2], self.goal, self.svc, 1000) # call RRT* planner
                 if path:
                     if not self.svc.check_path([self.current_pose[:2]] + path):
-                        rospy.logwarn("[PLAN] Path invalid after computation. Skipping.") # !!!
                         continue
-                    rospy.loginfo(f"[PLAN] Path found with {len(path)} points") # !!!
+                    rospy.loginfo(f"[PLAN] Path found with {len(path)} points")
                     self.at_goal = False
                     goal_reached_msg = Bool()
                     goal_reached_msg.data = self.at_goal
@@ -199,16 +197,15 @@ class OnlinePlanner:
                     del path[0] # remove current pose from path
                     return path
                 else:
-                    rospy.logwarn(f"[PLAN] No path found on attempt {i+1}") # !!!
+                    rospy.logwarn(f"[PLAN] No path found on attempt {i+1}")
                     self.at_goal = True
                     goal_reached_msg = Bool()
                     goal_reached_msg.data = self.at_goal
                     self.atgoal_pub.publish(goal_reached_msg)
             except Exception as e:
-                rospy.logerr(f"[PLAN] Error in compute_path: {str(e)}") # !!! planning error
-    
+                rospy.logerr(f"[PLAN] Error in compute_path: {str(e)}")
   
-        rospy.logwarn("[PLAN] Failed to find a path after 6 attempts") # !!!
+        rospy.logwarn("[PLAN] Failed to find a path after 6 attempts")
         self.at_goal = True
         goal_reached_msg = Bool()
         goal_reached_msg.data = self.at_goal
@@ -220,14 +217,18 @@ class OnlinePlanner:
 
     # Control loop called every 0.1 seconds
     def controller(self, event):
+        v, w = 0, 0
+
         if self.current_pose is None:
             return  # wait until odometry is received
         
         # If no path is available
         if self.path is None or len(self.path) == 0:
+            self.__send_command__(0, 0)
             return
-        self.check_again() # check if stuck !!!
-        v, w = 0, 0 # stop the robot !!!
+        
+        # Check if stuck !!! is this necessary?
+        #self.check_again()
 
         # If a path is available
         if len(self.path) > 0:
@@ -241,6 +242,7 @@ class OnlinePlanner:
             if not self.svc.check_path(self.path):
                 rospy.logwarn("[CTRL] Path is invalid! Replanning.")
                 self.path = self.plan()
+                self.__send_command__(0, 0)
                 return
 
             # If close enough to the waypoint
@@ -301,7 +303,7 @@ class OnlinePlanner:
 
         self.marker_pub.publish(m)
 
-    # Publish visual marker for goal !!! doesn't this conflict with publish_viewpoint_marker?
+    # Publish visual marker for goal
     def publish_goal_marker(self, goal_point):
         m = Marker()
         m.header.frame_id = 'world_ned'
@@ -317,7 +319,6 @@ class OnlinePlanner:
         m.scale.y = 0.3
         m.scale.z = 0.3
         m.color = ColorRGBA(0, 1, 0, 1) # green
-
         self.goal_marker_pub.publish(m)
 
     # Publish tree visualisation !!! currently empty, to do

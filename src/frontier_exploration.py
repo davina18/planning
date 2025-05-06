@@ -22,7 +22,7 @@ class FrontierDetector:
         self.origin = None
         self.current_pose = None
         self.map = None
-        self.svc = StateValidityChecker(0.3)    # !!! SVC with 0.3m obstalcle inflation
+        self.svc = StateValidityChecker(0.3)    # svc with 0.3m obstacle clearance
         self.at_goal = True             # whether the robot has reached the current goal
         self.current_clusters = None    # currently detected frontier cluseters
         self.visited_goals = set()
@@ -33,12 +33,12 @@ class FrontierDetector:
         self.goal_sub = rospy.Subscriber('/at_goal', Bool, self.at_goal_callback)
 
         # Publishers
-        self.goal_pub = rospy.Publisher('/move_base_simple/goal', PoseStamped, queue_size=10)
+        self.new_goal_pub = rospy.Publisher('/new_goal', PoseStamped, queue_size=10)
         self.cluster_pub = rospy.Publisher('/frontier_clusters', MarkerArray, queue_size=10)
         self.frontier_pub = rospy.Publisher('/frontier_points', PoseArray, queue_size=10)
         self.viewpoint_pub = rospy.Publisher('/best_viewpoint_marker', Marker, queue_size=10)
 
-        rospy.Timer(rospy.Duration(1.0), self.timer_callback) # frequency of executing exploration
+        rospy.Timer(rospy.Duration(1.0), self.delayed_start, oneshot=True) # start exploration once map is ready
 
 #------------------------------------------- Helper Functions ------------------------------------------------#
 
@@ -95,12 +95,14 @@ class FrontierDetector:
                 # Begin exploration again
                 self.exploration()
 
-    # Callback to see if exploration should begin egain
-    def timer_callback(self, event): # !!! Give a better name
-        if self.at_goal and self.map is not None: # only explore if at a goal
-            self.exploration()
-
 #--------------------------------------------- Exploration ---------------------------------------------------#
+
+    # Begin exploration once map is ready
+    def delayed_start(self, event):
+        if self.map is not None:
+            self.exploration()
+        else:
+            rospy.Timer(rospy.Duration(1.0), self.delayed_start, oneshot=True)
 
     # Explore the environment
     def exploration(self):
@@ -132,12 +134,12 @@ class FrontierDetector:
 
         # Group frontier points into clusters
         clusters = self.cluster_frontiers(frontier_mask)
-        rospy.loginfo(f"[EXPLORE] Found {len(clusters)} clusters") # !!!
+        rospy.loginfo(f"[EXPLORE] Found {len(clusters)} clusters")
         if not clusters:
             rospy.loginfo("[EXPLORE] No frontiers found.")
             return
         self.current_clusters = clusters
-        self.publish_cluster_markers(clusters) # !!! visualise clusters
+        self.publish_cluster_markers(clusters)
    
         # Select the best cluster
         best_cluster = self.select_best_cluster(clusters)
@@ -158,7 +160,7 @@ class FrontierDetector:
     # Publish detected frontier points as a PoseArray
     def publish_frontiers(self, frontier_mask):
         frontier_points = np.argwhere(frontier_mask) # get coords of frontier points
-        rospy.loginfo(f"[FRONTIERS] Detected {len(frontier_points)} frontier points") # !!!
+        rospy.loginfo(f"[FRONTIERS] Detected {len(frontier_points)} frontier points")
 
         pose_array = PoseArray()
         pose_array.header.frame_id = "world_ned"
@@ -304,9 +306,8 @@ class FrontierDetector:
                 goal.pose.position.x = world_point[0]
                 goal.pose.position.y = world_point[1]
                 goal.pose.orientation.w = 1.0
-                self.goal_pub.publish(goal)
-                self.publish_viewpoint_marker(world_point)
-                rospy.loginfo(f"[PUBLISH GOAL] Published valid goal at: {world_point}") # !!!
+                self.new_goal_pub.publish(goal)
+                rospy.loginfo(f"[PUBLISH GOAL] Published valid goal at: {world_point}")
                 self.visited_goals.add(world_key) # mark as visited
                 return True
             else:
@@ -319,24 +320,6 @@ class FrontierDetector:
         
         rospy.logerr("[PUBLISH GOAL] Failed to find valid goal after retries")
         return False
-
-    # Publish visual marker for goal viewpoint
-    def publish_viewpoint_marker(self, viewpoint):
-        marker = Marker()
-        marker.header.frame_id = "world_ned"
-        marker.header.stamp = rospy.Time.now()
-        marker.ns = "viewpoint"
-        marker.id = 0
-        marker.type = Marker.SPHERE
-        marker.action = Marker.ADD
-        marker.pose.position.x = viewpoint[0]
-        marker.pose.position.y = viewpoint[1]
-        marker.pose.position.z = 0
-        marker.scale.x = 0.2
-        marker.scale.y = 0.2
-        marker.scale.z = 0.2
-        marker.color = ColorRGBA(0.0, 1.0, 0.0, 1.0)
-        self.viewpoint_pub.publish(marker)
 
 #-------------------------------------------- Information Gain ----------------------------------------------#
     

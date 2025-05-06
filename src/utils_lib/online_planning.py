@@ -18,7 +18,7 @@ class StateValidityChecker:
         self.max_recursion = 50  # recursion limit for finding a valid goal
 
     # Set the map and optionally inflate the obstacles
-    def set(self, data, resolution, origin, inflate=True):
+    def set(self, data, resolution, origin, inflate=False):
         self.map = data
         self.resolution = resolution
         self.origin = np.array(origin)
@@ -195,7 +195,6 @@ class Planner:
                         cost[n] = cost[q_new] + self.dist(q_new, n)
                         G["edges"] = [edge for edge in G["edges"] if edge[1] != n]
                         self.add_edge(G, q_new, n)
-                        # !!! DO WE REMOVE THE OLD EDGES?
 
                 # Check if we are close enough to connect to the goal
                 if self.dist(q_new, q_goal) < min_dist:

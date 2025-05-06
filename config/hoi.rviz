@@ -10,6 +10,7 @@ Panels:
         - /RGB1/Visibility1
         - /Marker1
         - /Marker2
+        - /MarkerArray1
       Splitter Ratio: 0.4852941036224365
     Tree Height: 1522
   - Class: rviz/Selection
@@ -374,6 +375,7 @@ Visualization Manager:
         Grid: true
         Map: true
         Marker: true
+        MarkerArray: true
         Odometry: true
         RPLidar: true
         RobotModel: true
@@ -394,6 +396,15 @@ Visualization Manager:
       Name: Marker
       Namespaces:
         path: true
+      Queue Size: 100
+      Value: true
+    - Class: rviz/MarkerArray
+      Enabled: true
+      Marker Topic: /frontier_clusters
+      Name: MarkerArray
+      Namespaces:
+        cluster_labels: true
+        frontiers: true
       Queue Size: 100
       Value: true
   Enabled: true
@@ -424,7 +435,7 @@ Visualization Manager:
   Views:
     Current:
       Class: rviz/Orbit
-      Distance: 29.10257911682129
+      Distance: 13.667960166931152
       Enable Stereo Rendering:
         Stereo Eye Separation: 0.05999999865889549
         Stereo Focal Distance: 1
@@ -440,9 +451,9 @@ Visualization Manager:
       Invert Z Axis: true
       Name: Current View
       Near Clip Distance: 0.009999999776482582
-      Pitch: 0.6497970223426819
+      Pitch: 1.1047970056533813
       Target Frame: <Fixed Frame>
-      Yaw: 1.501760482788086
+      Yaw: 1.6167603731155396
     Saved: ~
 Window Geometry:
   Displays:
@@ -462,5 +473,5 @@ Window Geometry:
   Views:
     collapsed: false
   Width: 1848
-  X: 144
+  X: 1992
   Y: 54

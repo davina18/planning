@@ -5,6 +5,9 @@
     <!-- Run frontier exploration node -->
     <node pkg="planning" type="frontier_exploration.py" name="frontier_detector" output="screen" launch-prefix="python3" />
 
+    <!-- Run goal manager node -->
+    <node pkg="planning" type="goal_manager.py" name="goal_manager" output="screen" launch-prefix="python3" />
+
     <!-- Run online planning node -->
     <node pkg="planning" type="planner_node.py" name="online_planner" output="screen" launch-prefix="python3" />
 </launch>
