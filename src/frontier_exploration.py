@@ -22,10 +22,12 @@ class FrontierDetector:
         self.origin = None
         self.current_pose = None
         self.map = None
-        self.svc = StateValidityChecker(0.3)    # svc with 0.3m obstacle clearance
-        self.at_goal = True             # whether the robot has reached the current goal
-        self.current_clusters = None    # currently detected frontier cluseters
+        self.svc = StateValidityChecker(0.3)  # svc with 0.3m obstacle clearance
+        self.at_goal = True                   # whether the robot has reached the current goal
+        self.current_clusters = None          # currently detected frontier cluseters
         self.visited_goals = set()
+        self.visited_radius = 0.5             # meters
+        #self.bounds = {'xmin': -2.0, 'xmax': 2.0, 'ymin': -2.0, 'ymax': 2.0} # virtual boundaries
 
         # Subscribers
         self.map_sub = rospy.Subscriber('/projected_map', OccupancyGrid, self.get_map, queue_size=10)
@@ -37,8 +39,9 @@ class FrontierDetector:
         self.cluster_pub = rospy.Publisher('/frontier_clusters', MarkerArray, queue_size=10)
         self.frontier_pub = rospy.Publisher('/frontier_points', PoseArray, queue_size=10)
         self.viewpoint_pub = rospy.Publisher('/best_viewpoint_marker', Marker, queue_size=10)
+        self.boundary_pub = rospy.Publisher('/exploration_boundary', Marker, queue_size=1, latch=True)
 
-        rospy.Timer(rospy.Duration(1.0), self.delayed_start, oneshot=True) # start exploration once map is ready
+        rospy.Timer(rospy.Duration(1.0), self.delayed_start, oneshot=True)   # start exploration once map is ready
 
 #------------------------------------------- Helper Functions ------------------------------------------------#
 
@@ -56,6 +59,12 @@ class FrontierDetector:
             map_point[0] * self.resolution + self.origin[0],
             map_point[1] * self.resolution + self.origin[1]
         ]
+    
+    # Checks whether a point (x, y) is within a bounding box
+    def is_within_bounds(self, world_point, bounds=5.0):
+        x, y = world_point
+        return -bounds <= x <= bounds and -bounds <= y <= bounds
+
 
 #------------------------------------------- Callback Functions ----------------------------------------------#
 
@@ -100,6 +109,7 @@ class FrontierDetector:
     # Begin exploration once map is ready
     def delayed_start(self, event):
         if self.map is not None:
+            #self.publish_exploration_boundary()
             self.exploration()
         else:
             rospy.Timer(rospy.Duration(1.0), self.delayed_start, oneshot=True)
@@ -152,8 +162,40 @@ class FrontierDetector:
         if best_point is None:
             rospy.logwarn("[EXPLORE] No best viewpoint found")
             return
+        
+        # Retry exploration after 3 seconds of waiting for goal
+        success = self.publish_valid_goal(best_point) # publish best viewpoint as the goal
+        if not success:
+            rospy.logwarn("[EXPLORE] Goal was skipped or invalid. Retrying in 3 seconds.")
+            rospy.Timer(rospy.Duration(3.0), lambda event: self.exploration(), oneshot=True)
 
-        self.publish_valid_goal(best_point) # publish best viewpoint as the goal
+    # Publish visualisation markers for virtual boundaries
+    def publish_exploration_boundary(self):
+        marker = Marker()
+        marker.header.frame_id = "world_ned"
+        marker.header.stamp = rospy.Time.now()
+        marker.ns = "exploration_bounds"
+        marker.id = 0
+        marker.type = Marker.LINE_STRIP
+        marker.action = Marker.ADD
+        marker.pose.orientation.w = 1.0
+        marker.scale.x = 0.05  # line width
+        marker.color.r = 1.0
+        marker.color.g = 0.0
+        marker.color.b = 0.0
+        marker.color.a = 1.0
+
+        # Define corners of the bounding box
+        points = [
+            Point(self.bounds['xmin'], self.bounds['ymin'], 0),
+            Point(self.bounds['xmax'], self.bounds['ymin'], 0),
+            Point(self.bounds['xmax'], self.bounds['ymax'], 0),
+            Point(self.bounds['xmin'], self.bounds['ymax'], 0),
+            Point(self.bounds['xmin'], self.bounds['ymin'], 0) 
+        ]
+        marker.points = points
+
+        self.boundary_pub.publish(marker)
 
 #-------------------------------------- Frontiers and Clustering ---------------------------------------------#
 
@@ -236,6 +278,7 @@ class FrontierDetector:
         marker_array.markers.append(clear_marker)
         self.cluster_pub.publish(marker_array)
 
+
 #------------------------------------------- Goal Selection --------------------------------------------------#
     
     # Select the best cluster based on distance, size, and information gain
@@ -245,9 +288,15 @@ class FrontierDetector:
 
         for cluster in clusters:
             centroid = self.map_to_world(cluster.centroid)
-            centroid_key = (round(centroid[0],2), round(centroid[1],2)) # round centroid for lookup purposes
-            if centroid_key in self.visited_goals: # skip clusters that have already been visited
-                 continue
+            # Skip clusters whose centroids are too close to any visited goal
+            centroid_np = np.array(centroid)
+            too_close = False
+            for visited in self.visited_goals:
+                if np.linalg.norm(centroid_np - np.array(visited)) < self.visited_radius:
+                    too_close = True
+                    break
+            if too_close:
+                continue
             
             distance = np.linalg.norm(self.current_pose[:2] - centroid) # distance from robot to centroid
             distance_score = 1.0 / (1.0 + distance) # clusters distance score is inversely proportional to its distance
@@ -271,7 +320,7 @@ class FrontierDetector:
         best_gain = -np.inf
 
         candidate_viewpoints = [cluster.centroid] # add the centroid as a candidate viewpoint
-        for _ in range(5):  # add 5 random points inside the cluster as candidate viewpoints
+        for _ in range(10):  # add 5 random points inside the cluster as candidate viewpoints
             if len(cluster.coords) > 0:
                 random_idx = np.random.randint(0, len(cluster.coords))
                 candidate_viewpoints.append(cluster.coords[random_idx])
@@ -292,10 +341,12 @@ class FrontierDetector:
     # Publish a valid goal
     def publish_valid_goal(self, map_point, max_attempts=3):
         world_point = self.map_to_world(map_point)
-        world_key = (round(world_point[0],2), round(world_point[1],2)) # rounded for lookup purposes
-        if world_key in self.visited_goals: # skip goal if already visited
-              rospy.loginfo(f"[PUBLISH GOAL] Skipping previously visited goal: {world_point}")
-              return False
+        # Check if goal is within radius of any previously visited point
+        for visited in self.visited_goals:
+            visited_np = np.array(visited)
+            if np.linalg.norm(np.array(world_point) - visited_np) < self.visited_radius:
+                rospy.loginfo(f"[PUBLISH GOAL] Skipping goal near previously visited point: {world_point}")
+                return False
         
         # Attempt n times
         for attempt in range(max_attempts):
@@ -308,7 +359,7 @@ class FrontierDetector:
                 goal.pose.orientation.w = 1.0
                 self.new_goal_pub.publish(goal)
                 rospy.loginfo(f"[PUBLISH GOAL] Published valid goal at: {world_point}")
-                self.visited_goals.add(world_key) # mark as visited
+                self.visited_goals.add(tuple(world_point)) # mark as visited
                 return True
             else:
                 rospy.logwarn(f"[PUBLISH GOAL] Invalid goal: {world_point}")
