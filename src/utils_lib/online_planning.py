@@ -77,16 +77,41 @@ class StateValidityChecker:
         return [x, y]
         
     # Check if a path is valid
-    def check_path(self, path):
+    '''def check_path(self, path):
         for i in range(len(path) - 1):
             # Check the path in increments
-            spaced_x = np.linspace(path[i][0], path[i+1][0], num=20)
-            spaced_y = np.linspace(path[i][1], path[i+1][1], num=20)
+            spaced_x = np.linspace(path[i][0], path[i+1][0], num=10)
+            spaced_y = np.linspace(path[i][1], path[i+1][1], num=10)
             for x, y in zip(spaced_x, spaced_y):
                 if not self.is_valid([x, y]):
                     rospy.logwarn(f"[CHECK_PATH] Invalid point in path: ({x:.2f}, {y:.2f})")
                     return False 
+        return True'''
+    def check_path(self, path, tolerance=0.1):
+        """
+        Check if the entire path is valid.
+        For each interpolated point between waypoints, if the point is invalid,
+        try a few points within a small tolerance.
+        """
+        for i in range(len(path) - 1):
+            spaced_x = np.linspace(path[i][0], path[i+1][0], num=10)
+            spaced_y = np.linspace(path[i][1], path[i+1][1], num=10)
+            for x, y in zip(spaced_x, spaced_y):
+                if self.is_valid([x, y]):
+                    continue
+
+                # If the exact point isn't valid, check a few neighboring points within tolerance.
+                neighbors = [
+                    [x + tolerance, y],
+                    [x - tolerance, y],
+                    [x, y + tolerance],
+                    [x, y - tolerance],
+                ]
+                if not any(self.is_valid(n) for n in neighbors):
+                    rospy.logwarn(f"[CHECK_PATH] Invalid point in path: ({x:.2f}, {y:.2f}) between waypoints {i} and {i+1}")
+                    return False
         return True
+
     
     #--------------------------- Used in frontier_exploration.py ------------------------#
 
@@ -152,7 +177,7 @@ class StateValidityChecker:
 #---------------------------------------- RRT* Planner --------------------------------------#
 
 class Planner:
-    def __init__(self, state_validity_checker, max_iterations=10000, dominion=[-10.0, 10.0, -10.0, 10.0], delta_q=1, goal_bias=0.1):
+    def __init__(self, state_validity_checker, max_iterations=1000, dominion=[-10.0, 10.0, -10.0, 10.0], delta_q=0.3, goal_bias=0.1):
         self.svc = state_validity_checker
         self.max_iterations = max_iterations
         self.dominion = dominion # planning bounds
@@ -166,7 +191,7 @@ class Planner:
         G = {"vertices": [q_start], "edges": []}
         cost = {q_start: 0} # cost to reach each vertex
 
-        r = 3.0  # radius for neighbors
+        r = 0.7  # radius for neighbors
         min_dist = 1.0 # minimum distance to connect to goal
 
         for _ in range(self.max_iterations):
@@ -195,14 +220,19 @@ class Planner:
                         cost[n] = cost[q_new] + self.dist(q_new, n)
                         G["edges"] = [edge for edge in G["edges"] if edge[1] != n]
                         self.add_edge(G, q_new, n)
-
+                
                 # Check if we are close enough to connect to the goal
-                if self.dist(q_new, q_goal) < min_dist:
-                    if self.svc.is_valid(q_goal) and self.is_segment_free_inc(q_new, q_goal):
-                        self.add_vertex(G, q_goal)
-                        self.add_edge(G, q_new, q_goal)
-                        return self.reconstruct_path(G, q_start, q_goal)
+                if self.dist(q_new, q_goal) < min_dist and self.is_segment_free_inc(q_new, q_goal):
+
+                    self.add_vertex(G, q_goal)
+                    self.add_edge(G, q_new, q_goal)
+                    total_path = self.reconstruct_path(G, q_start, q_goal)
+                    #rospy.loginfo(f"[PLANNER] Reconstructed path with {len(total_path)} points.")
                     
+                    if self.svc.check_path(total_path):
+                        rospy.loginfo("[PLANNER] Path is valid after reconstruction.")
+                        return total_path     
+                           
         rospy.loginfo("[PLANNER] No path found.")
         return None
 
@@ -265,6 +295,7 @@ class Planner:
 
     # Reconstruct the final path by traversing from goal to start
     def reconstruct_path(self, G, q_start, q_goal):
+        rospy.loginfo(f"[PLANNER] Reconstructing path from {q_start} to {q_goal}")
         path = [q_goal]
         current = q_goal
         while current != q_start:
@@ -274,6 +305,56 @@ class Planner:
                     current = v1
                     break
         return path[::-1] # reverse so that the path is from start to goal
+   
+    '''def smooth_path(self, path, start, goal):
+        rospy.loginfo(f"[SMOOTH] Input path: {path}")
+        rospy.loginfo(f"[SMOOTH] Start: {start}, Goal: {goal}")
+
+        if not path or len(path) < 2:
+            rospy.logwarn("[SMOOTH] Path too short to smooth.")
+            return path
+
+        smoothed = [start]
+        i = 0
+        while i < len(path):
+            j = len(path) - 1
+            while j > i:
+                if self.svc.check_path([path[i], path[j]]):
+                    rospy.loginfo(f"[SMOOTH] Shortcut from {path[i]} to {path[j]}")
+                    smoothed.append(path[j])
+                    i = j
+                    break
+                j -= 1
+            else:
+                # if no shortcut found, move to next
+                i += 1
+
+        smoothed.append(goal)
+        rospy.loginfo(f"[SMOOTH] Final smoothed path: {smoothed}")
+        return smoothed'''
+    
+    def smooth_path(self, path):
+        #rospy.loginfo(f"[SMOOTH] Input path: {path}")
+        n = len(path)
+        smoothed_path = [path[0]]
+        i = 0
+        while i < n - 1:
+            j = n - 1
+            while j > i and not self.is_segment_free_inc(path[i], path[j]):
+                #rospy.loginfo(f"[SMOOTH] Shortcut from {path[i]} to {path[j]}")
+                j -= 1
+            smoothed_path.append(path[j])
+            i = j
+        #rospy.loginfo(f"[SMOOTH] Final smoothed path: {smoothed_path}")
+        return smoothed_path
+
+
+    def is_close(self, point_a, point_b, tolerance=0.01):
+         # If either point is None. Return False
+        if point_a is None or point_b is None:
+            return False
+        #Return True if the points are within the tolerance
+        return np.linalg.norm(np.array(point_a) - np.array(point_b)) <= tolerance
 
     # Compute Euclidean distance between two points
     def dist(self, p1, p2):
@@ -290,8 +371,14 @@ def compute_path(start_p, goal_p, state_validity_checker, max_iterations=1000):
                       delta_q=1, goal_bias=0.1)
     path = planner.compute_path(start_p, goal_p)
     if path:
-        return [[p[0], p[1]] for p in path]
-    return []
+        #return [[p[0], p[1]] for p in path]
+        smoothed_path = planner.smooth_path(path)
+        rospy.loginfo(f"Path found and smoothed: {smoothed_path}")
+        result = [[p[0], p[1]] for p in smoothed_path]
+        return result
+    else:
+        rospy.logwarn("No path found!")
+        return None
 
 # Compute (v, w) velocities to drive the robot towards the goal
 def move_to_point(current, goal, Kv=0.5, Kw=0.5):

@@ -1,6 +1,6 @@
 
 <launch>
-    <include file="$(find planning)/launch/turtlebot_basic.launch"/>
+    <!--<include file="$(find planning)/launch/turtlebot_basic.launch"/>-->
 
     <node pkg="turtlebot_online_path_planning" type="laser_scan_to_point_cloud_node.py" name="laserscan_to_pointcloud" output="screen">
         <remap from="/kobuki/sensors/rplidar" to="/turtlebot/kobuki/sensors/rplidar"/>

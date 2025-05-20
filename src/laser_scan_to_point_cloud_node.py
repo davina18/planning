@@ -17,6 +17,7 @@ def scan_cb(msg):
     pc_pub.publish(pc2_msg)
 
 
-rospy.Subscriber("/scan", LaserScan, scan_cb, queue_size=1)
-rospy.Subscriber("/kobuki/sensors/rplidar", LaserScan, scan_cb, queue_size=1)
+#rospy.Subscriber("/scan", LaserScan, scan_cb, queue_size=1)
+#rospy.Subscriber("/kobuki/sensors/rplidar", LaserScan, scan_cb, queue_size=1)
+rospy.Subscriber("/turtlebot/kobuki/sensors/rplidar", LaserScan, scan_cb, queue_size=1)
 rospy.spin()

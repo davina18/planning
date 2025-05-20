@@ -8,6 +8,7 @@ from std_msgs.msg import Bool, ColorRGBA, Header
 from skimage import measure
 import tf
 from utils_lib.online_planning import StateValidityChecker
+import math
 
 class FrontierDetector:
 
@@ -31,7 +32,7 @@ class FrontierDetector:
 
         # Subscribers
         self.map_sub = rospy.Subscriber('/projected_map', OccupancyGrid, self.get_map, queue_size=10)
-        self.odom_sub = rospy.Subscriber('/turtlebot/odom_ground_truth', Odometry, self.get_odom)
+        self.odom_sub = rospy.Subscriber('/turtlebot/kobuki/odom', Odometry, self.get_odom)
         self.goal_sub = rospy.Subscriber('/at_goal', Bool, self.at_goal_callback)
 
         # Publishers
@@ -139,7 +140,7 @@ class FrontierDetector:
                     neighborhood = self.map[i-1:i+2, j-1:j+2] # 3x3 neighbourhood
                     if -1 in neighborhood:  # neighbouring unknown cells
                         frontier_mask[i, j] = True # mark as a frontier
-
+    
         self.publish_frontiers(frontier_mask) # publish frontier points
 
         # Group frontier points into clusters
@@ -172,7 +173,7 @@ class FrontierDetector:
     # Publish visualisation markers for virtual boundaries
     def publish_exploration_boundary(self):
         marker = Marker()
-        marker.header.frame_id = "world_ned"
+        marker.header.frame_id = "odom"
         marker.header.stamp = rospy.Time.now()
         marker.ns = "exploration_bounds"
         marker.id = 0
@@ -205,7 +206,7 @@ class FrontierDetector:
         rospy.loginfo(f"[FRONTIERS] Detected {len(frontier_points)} frontier points")
 
         pose_array = PoseArray()
-        pose_array.header.frame_id = "world_ned"
+        pose_array.header.frame_id = "odom"
         pose_array.header.stamp = rospy.Time.now()
 
         for point in frontier_points:
@@ -232,7 +233,7 @@ class FrontierDetector:
         
         for idx, cluster in enumerate(clusters):
             marker = Marker()
-            marker.header.frame_id = "world_ned"
+            marker.header.frame_id = "odom"
             marker.header.stamp = rospy.Time.now()
             marker.ns = "frontiers"
             marker.id = idx
@@ -269,7 +270,7 @@ class FrontierDetector:
     def clear_frontiers_and_clusters(self):
         empty_frontiers = PoseArray()
         empty_frontiers.header.stamp = rospy.Time.now()
-        empty_frontiers.header.frame_id = "world_ned"
+        empty_frontiers.header.frame_id = "odom"
         self.frontier_pub.publish(empty_frontiers)
         
         clear_marker = Marker()
@@ -285,7 +286,9 @@ class FrontierDetector:
     def select_best_cluster(self, clusters):
         best_cluster = None
         best_score = -np.inf
-
+        
+        robot_xy   = self.current_pose[:2]
+        robot_yaw  = self.current_pose[2]
         for cluster in clusters:
             centroid = self.map_to_world(cluster.centroid)
             # Skip clusters whose centroids are too close to any visited goal
@@ -306,8 +309,24 @@ class FrontierDetector:
                 int(cluster.centroid[1])
             )
 
+             # --- NEW: heading cost -----------------------------------------------
+            # angle between robot’s heading and vector to centroid
+            vec_to_centroid = centroid - robot_xy
+            target_yaw      = math.atan2(vec_to_centroid[1], vec_to_centroid[0])
+            yaw_error       = abs(self.wrap_angle(target_yaw - robot_yaw))  # 0..π
+
+            heading_penalty = yaw_error / math.pi            # 0 (straight ahead) … 1
+            if yaw_error > math.pi / 2:                      # >90° ⇒ “behind”
+                heading_penalty *= 1.5                      # extra penalty
+
+            heading_score = 1.0 - heading_penalty           # higher is better
+
             # Combine scores as a weighted score
-            score = 0.4 * distance_score + 0.4 * size_score + 0.2 * info_gain
+            # Tune the  α,β,γ,δ weights to taste (they must sum ≤ 1 for readability)
+            score = (0.40 * distance_score +
+                 0.25 * size_score +
+                 0.25 * info_gain +
+                 0.10 * heading_score)
             if score > best_score:
                 best_score = score
                 best_cluster = cluster
@@ -320,7 +339,7 @@ class FrontierDetector:
         best_gain = -np.inf
 
         candidate_viewpoints = [cluster.centroid] # add the centroid as a candidate viewpoint
-        for _ in range(10):  # add 5 random points inside the cluster as candidate viewpoints
+        for _ in range(20):  # add 10 random points inside the cluster as candidate viewpoints
             if len(cluster.coords) > 0:
                 random_idx = np.random.randint(0, len(cluster.coords))
                 candidate_viewpoints.append(cluster.coords[random_idx])
@@ -329,6 +348,7 @@ class FrontierDetector:
             # Check if the candidate viewpoint is valid
             world_point = self.map_to_world(point)
             if not self.svc.is_valid_frontier(world_point):
+                rospy.logdebug(f"[VIEWPOINT] Rejected invalid point: {world_point}")
                 continue
             # Compute its information gain
             gain = self.compute_information_gain(int(point[0]), int(point[1]))
@@ -352,7 +372,7 @@ class FrontierDetector:
         for attempt in range(max_attempts):
             if self.svc.is_valid_frontier(world_point): # check if frontier is valid
                 goal = PoseStamped()
-                goal.header.frame_id = "world_ned"
+                goal.header.frame_id = "odom"
                 goal.header.stamp = rospy.Time.now()
                 goal.pose.position.x = world_point[0]
                 goal.pose.position.y = world_point[1]

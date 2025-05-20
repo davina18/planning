@@ -1,0 +1,36 @@
+<launch>
+    <!-- Load robot description -->
+    <param name="robot_description" command="$(find xacro)/xacro '$(find kobuki_description)/urdf/kobuki_standalone.urdf.xacro'"/>
+    <node name="robot_state_publisher" pkg="robot_state_publisher" type="robot_state_publisher"/>
+
+    <!-- Remap scan topics if needed -->
+    <node pkg="turtlebot_online_path_planning" type="laser_scan_to_point_cloud_node.py" name="laserscan_to_pointcloud" output="screen">
+        <remap from="/kobuki/sensors/rplidar" to="/turtlebot/kobuki/sensors/rplidar"/> <!-- or whatever your real scan topic is -->
+    </node>
+
+    <!-- Planning nodes -->
+    <node pkg="planning" type="frontier_exploration.py" name="frontier_detector" output="screen" launch-prefix="python3" />
+    <node pkg="planning" type="goal_manager.py" name="goal_manager" output="screen" launch-prefix="python3" />
+    <node pkg="planning" type="planner_node.py" name="online_planner" output="screen" launch-prefix="python3" />
+    
+    <!-- Octomap -->
+    <node pkg="octomap_server" type="octomap_server_node" name="octomap" output="screen">
+    <remap from="/cloud_in" to="/cloud_in"/>
+    <param name="frame_id" value="odom"/>
+    <param name="base_frame_id" value="turtlebot/kobuki/base_link"/>
+    <param name="resolution" value="0.05"/>
+    <param name="sensor_model/max_range" value="10.0"/>
+    <param name="filter_ground" value="false"/>
+    <param name="latch" value="false"/>
+    <param name="tf_buffer" value="2.0"/>
+    <param name="project_2d_map" value="true"/>
+
+    <param name="occupancy_min" value="0.12"/>
+    <param name="occupancy_max" value="0.97"/>
+    <param name="occupancy_thres" value="0.9"/>
+
+    </node>
+
+    <!-- RVIZ -->
+    <node pkg="rviz" type="rviz" name="rviz" args="-d $(find planning)/config/hoi_real.rviz"/>
+</launch>

@@ -10,4 +10,7 @@
 
     <!-- Run online planning node -->
     <node pkg="planning" type="planner_node.py" name="online_planner" output="screen" launch-prefix="python3" />
+
+    <!--<node pkg="planning" type="path.py" name="odom_real" output="screen" launch-prefix="python3" /> -->
+
 </launch>

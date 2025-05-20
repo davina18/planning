@@ -32,17 +32,15 @@ class OnlinePlanner:
         self.tree = []
 
         # Initialise motion planner parameters
-        self.Kv = 0.5
-        self.Kw = 0.5
-        self.v_max = 0.15
-        self.w_max = 0.3
-        self.distance_threshold = 0.2
+        self.Kv = 0.5 #0.5
+        self.Kw = 0.5 #1.2
+        self.v_max = 0.05 #0.3
+        self.w_max = 0.5 #1.0
+        self.distance_threshold = 0.1 #0.2
 
         # Initialise robot parameters
         self.wheel_radius = 0.035
         self.wheel_base_distance = 0.257
-
-        rospy.Timer(rospy.Duration(0.1), self.controller) # frequency to call controller()
 
         # Publishers
         self.cmd_pub = rospy.Publisher(cmd_vel_topic, Twist, queue_size=10)
@@ -56,6 +54,9 @@ class OnlinePlanner:
         self.odom_sub = rospy.Subscriber(odom_topic, Odometry, self.get_odom)
         self.move_goal_sub = rospy.Subscriber('/move_base_simple/goal', PoseStamped, self.goal_pose)
 
+
+        rospy.Timer(rospy.Duration(0.1), self.controller) # frequency to call controller()
+
 #------------------------------------------- Helper Functions ----------------------------------------------#
 
     # Bound an angle to the range [-pi, pi]
@@ -64,7 +65,7 @@ class OnlinePlanner:
             angle -= 2 * np.pi
         while angle < -np.pi:
             angle += 2 * np.pi
-        return angle
+        return -angle
 
 #------------------------------------------- Callback Functions ----------------------------------------------#
 
@@ -81,41 +82,29 @@ class OnlinePlanner:
             odom.pose.pose.position.x,
             odom.pose.pose.position.y,
             yaw])
+        
+        #print("odom yaw", yaw)  # Callback to check goal validity when a new goal is received
 
-    # Callback to check goal validity when a new goal is received
     def goal_pose(self, goal):
         if self.current_pose is None:
              return     # wait until odometry is received
         
         if self.svc.there_is_map:
             self.goal = np.array([goal.pose.position.x, goal.pose.position.y])
-            
-            if self.svc.is_valid(self.goal):
-                self.publish_goal_marker(self.goal) # publishes goal marker
-                self.path = []
-                self.path = self.plan() # plan a path to the goal
-                self.at_goal = False
-                self.atgoal_pub.publish(Bool(data=False)) # goal not reached yet
-            else:
-                rospy.logwarn("[GOAL] Invalid goal, finding alternative")
-                self.goal = self.svc.find_alternative_goal(self.goal)
-                if self.goal:
-                    rospy.loginfo(f"[GOAL] Alternative goal found: {self.goal}")
-                    self.path = []
-                    self.path = self.plan()
-                    self.at_goal = False
-                    goal_reached_msg = Bool()
-                    goal_reached_msg.data = self.at_goal
-                    self.atgoal_pub.publish(goal_reached_msg)
-                else:
-                    rospy.logerr("[GOAL] Failed to find alternative goal")
-                    self.atgoal_pub.publish(Bool(data=True))
+            self.publish_goal_marker(self.goal) # publishes goal marker
+            self.path = []
+            self.path = self.plan() # plan a path to the goal
+            self.at_goal = False
+            self.atgoal_pub.publish(Bool(data=False)) # goal not reached yet
+
 
     # Callback to check path validity when a new occupancy grid map is received
     def get_gridmap(self, gridmap):
         if self.current_pose is None:
             return  # wait until odometry is received
         
+        self.current_map = gridmap # store the current map
+
         if (gridmap.header.stamp - self.last_map_time).to_sec() > 1: # only update if its been more than 1 second
             self.last_map_time = gridmap.header.stamp
             env = np.array(gridmap.data).reshape(gridmap.info.height, gridmap.info.width).T # convert map data to 2d array
@@ -128,8 +117,7 @@ class OnlinePlanner:
                 path = [self.current_pose[:2]] + self.path[:2]
                 # If that path is invalid, replan a new path
                 if not self.svc.check_path(path):
-                    rospy.logwarn("[MAP] Path invalid. Replanning.")
-                    self.__send_command__(0, 0)
+                    rospy.logwarn("[MAP] Path invalid after remappping. Replanning.")
                     self.path = []
                     self.at_goal = False
                     goal_reached_msg = Bool()
@@ -139,25 +127,94 @@ class OnlinePlanner:
                 # If the goal becomes invalid, choose a new goal along the path !!! should we do this?
                 elif self.svc.is_valid(self.goal) == False:
                      self.goal = self.new_goal_in_path(path)
-                     rospy.loginfo(f"[MAP] Alternative goal found: {self.goal}")
+                     rospy.loginfo(f"[MAP] Alternative goal found in the path: {self.goal}")
                      self.at_goal = False
                      goal_reached_msg = Bool()
                      goal_reached_msg.data = self.at_goal
                      self.atgoal_pub.publish(goal_reached_msg)
                      self.path = self.plan() # replan a new path
 
-#------------------------------------------- Fallback Functions ----------------------------------------------#
+#------------------------------------------- Fallback Functions ----------------------------------------------#     
+    def trap_avoidance(self):
+        rospy.logwarn("[TRAP] Executing trap avoidance...")
 
-    # Safety mechanism to check if the robot is stuck !!! is this necessary?
-    #def check_again(self):
-    #    if not self.svc.is_valid(self.current_pose[0:2]): # if current pose is invalid
-    #        rospy.logwarn("Invalid current position, obstacle ahead")
-    #        start = time.time()
-    #        while time.time() - start < 1.0:  # move backward for 1 second
-    #            self.__send_command__(-0.8, 0.0)
-    #        self.__send_command__(0.0, 0.0)
-    #        del self.path[:]
-    #        self.plan() # replan a new path
+        # Get current map and pose
+        grid = self.current_map
+        res = grid.info.resolution
+        ox, oy = grid.info.origin.position.x, grid.info.origin.position.y
+        width, height = grid.info.width, grid.info.height
+
+        # Convert robot's position to map index
+        map_pos = self.svc.__position_to_map__((self.current_pose[0], self.current_pose[1]))
+        if map_pos is None:
+            rospy.logwarn("[TRAP] Robot is out of map bounds.")
+            return
+        mx, my = map_pos
+
+        best_theta = None
+        max_clear_dist = 0.0
+
+        # Scan directions (in robot frame, not fixed world)
+        for theta in np.linspace(0, 2*np.pi, 36, endpoint=False):
+            dist = 0.0
+            while dist < 1.0:
+                # Raycasting in map index space
+                tx = mx + int((dist * np.cos(theta)) / res)
+                ty = my + int((dist * np.sin(theta)) / res)
+
+                if not (0 <= tx < width and 0 <= ty < height):
+                    break
+
+                cell_value = grid.data[ty * width + tx]
+                if cell_value > 50:
+                    break  # hit an obstacle
+
+                dist += res
+
+            if dist > max_clear_dist:
+                max_clear_dist = dist
+                best_theta = theta
+
+        if best_theta is None:
+            rospy.logwarn("[TRAP] No clear direction found.")
+            return
+
+        # Convert best_theta (in local robot frame) to global yaw
+        desired_yaw = self.wrap_angle(self.current_pose[2] + best_theta)
+        yaw_tolerance = 0.1
+        max_rotation_time = 3.0
+        start_time = rospy.Time.now()
+
+        rospy.loginfo(f"[TRAP] Rotating to clear direction: θ={best_theta:.2f} → yaw={desired_yaw:.2f}")
+
+        # Rotate toward best direction
+        while (rospy.Time.now() - start_time).to_sec() < max_rotation_time:
+            current_yaw = self.current_pose[2]
+            yaw_error = self.wrap_angle(desired_yaw - current_yaw)
+
+            if abs(yaw_error) < yaw_tolerance:
+                rospy.loginfo("[TRAP] Finished rotating.")
+                break
+
+            twist = Twist()
+            twist.angular.z = 0.5 * yaw_error
+            self.cmd_pub.publish(twist)
+            rospy.sleep(0.05)
+        else:
+            rospy.logwarn("[TRAP] Rotation timed out.")
+
+        self.cmd_pub.publish(Twist())  # stop rotation
+
+        # Small forward nudge
+        rospy.loginfo("[TRAP] Moving forward slightly to escape.")
+        twist = Twist()
+        twist.linear.x = 0.1
+        self.cmd_pub.publish(twist)
+        rospy.sleep(1.0)  # Move forward for 1 second
+        self.cmd_pub.publish(Twist())  # Stop again
+
+        rospy.loginfo("[TRAP] Trap avoidance complete.")
+
 
     # Choose another goal along the path
     def new_goal_in_path(self, path, index=-1):
@@ -168,86 +225,105 @@ class OnlinePlanner:
         # Step backward through the path to find a valid goal
         while index >= 0:
             candidate_goal = path[index][:2]  # get (x, y) position (ignore theta)
-            if self.is_valid(candidate_goal):
+            if self.svc.is_valid(candidate_goal):
                 return np.array(candidate_goal) # return candidate goal if valid
             index -= 1 # otherwise move one step back
         
         # If no valid point is found, return None
         return None
     
+    def check_again(self):
+        if not self.svc.is_valid(self.current_pose[0:2]):
+            rospy.logwarn("Invalid current position, obstacle ahead")
+            # Move backward to avoid the obstacle
+            start_time = time.time()
+            while time.time() - start_time < 1.0:
+                self.__send_command__(-0.5, 0.0)
+            self.__send_command__(0.0, 0.0)
+            self.trap_avoidance()  # Call trap avoidance
+            # Clear the existing path and re-plan
+            del self.path[:]
+            self.plan()
+    
+    
+
+    def add_heading_to_path(self, path):
+        path_with_yaw = []
+        for i in range(len(path) - 1):
+            dx = path[i+1][0] - path[i][0]
+            dy = path[i+1][1] - path[i][1]
+            yaw = math.atan2(dy, dx)
+            path_with_yaw.append([path[i][0], path[i][1], yaw])
+        # Add final point with same yaw as previous
+        path_with_yaw.append([path[-1][0], path[-1][1], path_with_yaw[-1][2]])
+        return path_with_yaw
+
+    
 #------------------------------------------- Path Planning ----------------------------------------------#
 
     # Compute valid path from current pose to goal
     def plan(self):
-        rospy.loginfo(f"[PLAN] Planning a path.")
-        for i in range(6): # try to compute a valid path 6 times
-            try:
-                path = compute_path(self.current_pose[:2], self.goal, self.svc, 1000) # call RRT* planner
-                if path:
-                    if not self.svc.check_path([self.current_pose[:2]] + path):
-                        continue
-                    rospy.loginfo(f"[PLAN] Path found with {len(path)} points")
-                    self.at_goal = False
-                    goal_reached_msg = Bool()
-                    goal_reached_msg.data = self.at_goal
-                    self.atgoal_pub.publish(goal_reached_msg)
-                    self.tree = []
-                    self.publish_path(path)
-                    self.publish_tree([])
-                    del path[0] # remove current pose from path
-                    return path
-                else:
-                    rospy.logwarn(f"[PLAN] No path found on attempt {i+1}")
-                    self.at_goal = True
-                    goal_reached_msg = Bool()
-                    goal_reached_msg.data = self.at_goal
-                    self.atgoal_pub.publish(goal_reached_msg)
-            except Exception as e:
-                rospy.logerr(f"[PLAN] Error in compute_path: {str(e)}")
-  
-        rospy.logwarn("[PLAN] Failed to find a path after 6 attempts")
-        self.at_goal = True
-        goal_reached_msg = Bool()
-        goal_reached_msg.data = self.at_goal
-        self.atgoal_pub.publish(goal_reached_msg) # publish atgoal as True so exploration can begin again
+        attempt = 0
+        rospy.loginfo(f"[PLAN] Planning a path...")
 
-        return []
+        while len(self.path) <= 1 and attempt < 6:
+            rospy.loginfo(f"[PLAN] Attempt {attempt + 1} to find a path.")
+            if not self.svc.is_valid(self.current_pose[:2]):
+                rospy.logwarn("[PLAN] Current pose is invalid. Executing trap avoidance...")
+                self.check_again()
+                return []
+
+            raw_path = compute_path(self.current_pose[:2], self.goal, self.svc, 1000)
+            
+            if raw_path:
+                full_path = [self.current_pose[:2]] + raw_path
+                self.path = self.add_heading_to_path(full_path)
+                self.publish_path(self.path)
+                self.publish_tree([])  # Optional: fill this with actual tree later
+                break
+            else:
+                rospy.logwarn(f"[PLAN] No path found on attempt {attempt + 1}")
+                self.at_goal = True
+                self.atgoal_pub.publish(Bool(data=True))
+
+            attempt += 1
+
+        if attempt == 3 or not self.path:
+            rospy.logwarn("[PLAN] All attempts failed. Triggering trap avoidance ?.")
+            self.check_again()
+            return []
+
+        rospy.loginfo("[PLAN] Path found!")
+        self.at_goal = True
+        self.atgoal_pub.publish(Bool(data=False))
+        del self.path[0]  # remove current pose
+        return self.path
     
 #------------------------------------------- Controller ----------------------------------------------#
 
     # Control loop called every 0.1 seconds
     def controller(self, event):
-        v, w = 0, 0
-
-        if self.current_pose is None:
+        
+        if self.current_pose is None or not self.svc.there_is_map:
             return  # wait until odometry is received
         
-        # If no path is available
-        if self.path is None or len(self.path) == 0:
-            self.__send_command__(0, 0)
-            return
-        
-        # Check if stuck !!! is this necessary?
-        #self.check_again()
+        #self.check_again() # check if the robot is stuck
+        v, w = 0, 0
 
         # If a path is available
         if len(self.path) > 0:
+            #rospy.loginfo("[CTRL] Path available.")
             waypoint = np.array(self.path[0]) # set next waypoint as the target
-            delta = waypoint - self.current_pose[:2]
+            delta = np.array(waypoint[:2]) - self.current_pose[:2]
             dist = np.linalg.norm(delta)
             angle_to_goal = math.atan2(delta[1], delta[0])
+            #print("Angle to goal: ", angle_to_goal)
             angle_err = self.wrap_angle(angle_to_goal - self.current_pose[2])
-
-            # If path is invalid, replan a new path
-            if not self.svc.check_path(self.path):
-                rospy.logwarn("[CTRL] Path is invalid! Replanning.")
-                self.path = self.plan()
-                self.__send_command__(0, 0)
-                return
 
             # If close enough to the waypoint
             if dist < self.distance_threshold:
                 rospy.loginfo(f"[CTRL] Reached waypoint: {waypoint}")
+                #print("Velocities after waypoint reached: ", v, w)
                 del self.path[0] # remove the reached waypoint
                 if not self.path: # if the path is empty, the goal is reached
                     rospy.loginfo("[CTRL] Reached the goal. Stopping the robot.")
@@ -259,13 +335,21 @@ class OnlinePlanner:
                     return
             else:
                 # Calculate linear and angular velocities to move towards waypoint
-                v = min(self.Kv * dist, self.v_max) if abs(angle_err) < np.pi/4 else 0 
+                #print("Angle error = ", abs(angle_err))
+                #print("Kv * dist = ", self.Kv * dist)
+                #print("v_max = ", self.v_max)
+                if abs(angle_err) > np.pi / 4:
+                    #print("Angle err: ", angle_err)
+                    v = 0.0
+                else:
+                    v = min(self.Kv * dist, self.v_max)
                 w = np.clip(-self.Kw * angle_err, -self.w_max, self.w_max)
                 self.at_goal = False
                 goal_reached_msg = Bool()
                 goal_reached_msg.data = self.at_goal
                 self.atgoal_pub.publish(goal_reached_msg)
 
+        #print("Velocities to move towards waypoint: ", v, w)
         self.__send_command__(v, w) # send calculated velocities
 
     # Send velocity commands to the robot
@@ -280,7 +364,7 @@ class OnlinePlanner:
     # Publish visualisation markers for planned path
     def publish_path(self, path):
         m = Marker()
-        m.header.frame_id = 'world_ned'
+        m.header.frame_id = 'odom'
         m.header.stamp = rospy.Time.now()
         m.ns = 'path'
         m.id = 0
@@ -306,7 +390,7 @@ class OnlinePlanner:
     # Publish visual marker for goal
     def publish_goal_marker(self, goal_point):
         m = Marker()
-        m.header.frame_id = 'world_ned'
+        m.header.frame_id = 'odom'
         m.header.stamp = rospy.Time.now()
         m.ns = 'goal'
         m.id = 0
@@ -332,6 +416,6 @@ if __name__ == '__main__':
     # Initialise planner node
     rospy.init_node('turtlebot_online_path_planning_node')
     # Initialise OnlinePlanner object
-    node = OnlinePlanner('/projected_map', '/turtlebot/odom_ground_truth', '/turtlebot/kobuki/commands/velocity',
+    node = OnlinePlanner('/projected_map', '/turtlebot/kobuki/odom', '/turtlebot/kobuki/commands/velocity',
                         np.array([-10.0, 10.0, -10.0, 10.0]), 0.2)
     rospy.spin() # keep node running
