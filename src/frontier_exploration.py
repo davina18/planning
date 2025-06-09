@@ -17,29 +17,29 @@ class FrontierDetector:
     def __init__(self):
         # Initialise node
         rospy.init_node('frontier_detector')
-
+        
         # Initialise variables
         self.resolution = None
         self.origin = None
         self.current_pose = None
         self.map = None
-        self.svc = StateValidityChecker(0.3)  # svc with 0.3m obstacle clearance
+        self.svc = StateValidityChecker(0.13)  # svc with 0.3m obstacle clearance
         self.at_goal = True                   # whether the robot has reached the current goal
         self.current_clusters = None          # currently detected frontier cluseters
         self.visited_goals = set()
         self.visited_radius = 0.5             # meters
-        #self.bounds = {'xmin': -2.0, 'xmax': 2.0, 'ymin': -2.0, 'ymax': 2.0} # virtual boundaries
 
         # Subscribers
         self.map_sub = rospy.Subscriber('/projected_map', OccupancyGrid, self.get_map, queue_size=10)
         self.odom_sub = rospy.Subscriber('/turtlebot/kobuki/odom', Odometry, self.get_odom)
         self.goal_sub = rospy.Subscriber('/at_goal', Bool, self.at_goal_callback)
+        self.failedcluster_sub = rospy.Subscriber('/failed_clusters', Bool, self.planning_failed_callback)
 
         # Publishers
         self.new_goal_pub = rospy.Publisher('/new_goal', PoseStamped, queue_size=10)
-        self.cluster_pub = rospy.Publisher('/frontier_clusters', MarkerArray, queue_size=10)
-        self.frontier_pub = rospy.Publisher('/frontier_points', PoseArray, queue_size=10)
-        self.viewpoint_pub = rospy.Publisher('/best_viewpoint_marker', Marker, queue_size=10)
+        self.cluster_pub = rospy.Publisher('/frontier_clusters', MarkerArray, queue_size=10, latch=True)
+        self.frontier_pub = rospy.Publisher('/frontier_points', PoseArray, queue_size=10, latch=True)
+        self.viewpoint_pub = rospy.Publisher('/best_viewpoint_marker', Marker, queue_size=10, latch=True)
         self.boundary_pub = rospy.Publisher('/exploration_boundary', Marker, queue_size=1, latch=True)
 
         rospy.Timer(rospy.Duration(1.0), self.delayed_start, oneshot=True)   # start exploration once map is ready
@@ -62,10 +62,10 @@ class FrontierDetector:
         ]
     
     # Checks whether a point (x, y) is within a bounding box
-    def is_within_bounds(self, world_point, bounds=5.0):
+    def is_within_bounds(self, world_point):
         x, y = world_point
-        return -bounds <= x <= bounds and -bounds <= y <= bounds
-
+        return (self.bounds['xmin'] <= x <= self.bounds['xmax'] and
+                self.bounds['ymin'] <= y <= self.bounds['ymax'])
 
 #------------------------------------------- Callback Functions ----------------------------------------------#
 
@@ -78,6 +78,20 @@ class FrontierDetector:
         data = np.array(msg.data).reshape((height, width))
         self.map = data.T # transpose to match the map coord system
         self.svc.set(self.map, self.resolution, self.origin)
+
+        map_centre = self.origin + np.array([
+            (msg.info.width * self.resolution) / 2.0,
+            (msg.info.height * self.resolution) / 2.0
+        ])
+        bound_half_size = 2.0  # half the size of the bounding box
+
+        # Centre the bounding box around the map centre
+        self.bounds = {
+            'xmin': map_centre[0] - bound_half_size,
+            'xmax': map_centre[0] + bound_half_size,
+            'ymin': map_centre[1] - bound_half_size,
+            'ymax': map_centre[1] + bound_half_size
+        }
 
     # Callback to get the odometry
     def get_odom(self, odom):
@@ -105,6 +119,14 @@ class FrontierDetector:
                 # Begin exploration again
                 self.exploration()
 
+    def planning_failed_callback(self, msg):
+        if msg.data:
+            rospy.logwarn("Received planning failure. Won't generate as a future cluster.")
+            self.cluster_centers = None
+            self.clear_frontiers_and_clusters()
+            rospy.sleep(0.5)
+            self.exploration()
+
 #--------------------------------------------- Exploration ---------------------------------------------------#
 
     # Begin exploration once map is ready
@@ -129,7 +151,6 @@ class FrontierDetector:
         Each regionprops object contains information about the cluster
         We only keep clusters with area greater than 5
         """
-
         rospy.loginfo("[EXPLORE] Starting exploration.")
         frontier_mask = np.zeros_like(self.map, dtype=bool)
 
@@ -323,14 +344,14 @@ class FrontierDetector:
 
             # Combine scores as a weighted score
             # Tune the  α,β,γ,δ weights to taste (they must sum ≤ 1 for readability)
-            score = (0.40 * distance_score +
-                 0.25 * size_score +
-                 0.25 * info_gain +
-                 0.10 * heading_score)
+            score = (0.60 * distance_score + #0.4
+                 0.20 * size_score + #0.25
+                 0.20 * info_gain) #0.25
+                 #0.10 * heading_score) #0.10
             if score > best_score:
                 best_score = score
                 best_cluster = cluster
-
+        
         return best_cluster # return the cluster with the best score
 
     # Select the best viewpoint within a cluster
@@ -339,7 +360,7 @@ class FrontierDetector:
         best_gain = -np.inf
 
         candidate_viewpoints = [cluster.centroid] # add the centroid as a candidate viewpoint
-        for _ in range(20):  # add 10 random points inside the cluster as candidate viewpoints
+        for _ in range(10):  # add 10 random points inside the cluster as candidate viewpoints
             if len(cluster.coords) > 0:
                 random_idx = np.random.randint(0, len(cluster.coords))
                 candidate_viewpoints.append(cluster.coords[random_idx])
@@ -361,6 +382,10 @@ class FrontierDetector:
     # Publish a valid goal
     def publish_valid_goal(self, map_point, max_attempts=3):
         world_point = self.map_to_world(map_point)
+        # Check if goal is outside the virtual bounding box
+        #if not self.is_within_bounds(world_point):
+        #    rospy.loginfo(f"[PUBLISH GOAL] Goal out of bounds: {world_point}")
+        #    return False
         # Check if goal is within radius of any previously visited point
         for visited in self.visited_goals:
             visited_np = np.array(visited)

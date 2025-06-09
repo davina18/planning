@@ -8,7 +8,7 @@ from scipy.ndimage import binary_dilation
 #--------------------------------- State Validity Checker -----------------------------------#
 
 class StateValidityChecker:
-    def __init__(self, distance=0.1, is_unknown_valid=True):
+    def __init__(self, distance=0.2, is_unknown_valid=True):
         self.map = None
         self.resolution = None  
         self.origin = None
@@ -44,7 +44,7 @@ class StateValidityChecker:
         # Check if pose is within map boundaries
         if row < 0 or row >= shape[0] or col < 0 or col >= shape[1]:
             return False
-
+        
         # Define area of minimum obstacle distance
         distance = round(self.distance / self.resolution)   # distance in grid cells
         i_min, i_max = max(0, row - distance), min(shape[0] - 1, row + distance)
@@ -223,7 +223,6 @@ class Planner:
                 
                 # Check if we are close enough to connect to the goal
                 if self.dist(q_new, q_goal) < min_dist and self.is_segment_free_inc(q_new, q_goal):
-
                     self.add_vertex(G, q_goal)
                     self.add_edge(G, q_new, q_goal)
                     total_path = self.reconstruct_path(G, q_start, q_goal)

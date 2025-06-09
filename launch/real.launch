@@ -7,7 +7,7 @@
     <node pkg="turtlebot_online_path_planning" type="laser_scan_to_point_cloud_node.py" name="laserscan_to_pointcloud" output="screen">
         <remap from="/kobuki/sensors/rplidar" to="/turtlebot/kobuki/sensors/rplidar"/> <!-- or whatever your real scan topic is -->
     </node>
-
+    
     <!-- Planning nodes -->
     <node pkg="planning" type="frontier_exploration.py" name="frontier_detector" output="screen" launch-prefix="python3" />
     <node pkg="planning" type="goal_manager.py" name="goal_manager" output="screen" launch-prefix="python3" />

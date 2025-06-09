@@ -5,10 +5,7 @@ Panels:
     Property Tree Widget:
       Expanded:
         - /Global Options1
-        - /RobotModel1
-        - /TF1
         - /Odometry1/Shape1
-        - /Map1
         - /RGB1/Visibility1
         - /Marker1
         - /Marker2
@@ -34,7 +31,7 @@ Panels:
   - Class: rviz/Time
     Name: Time
     SyncMode: 0
-    SyncSource: RPLidar
+    SyncSource: ""
 Preferences:
   PromptSaveOnExit: true
 Toolbars:
@@ -65,7 +62,7 @@ Visualization Manager:
       Collision Enabled: false
       Enabled: true
       Links:
-        All Links Enabled: true
+        All Links Enabled: false
         Expand Joint Details: false
         Expand Link Details: false
         Expand Tree: false
@@ -123,52 +120,52 @@ Visualization Manager:
           Alpha: 1
           Show Axes: false
           Show Trail: false
-          Value: true
+          Value: false
         turtlebot/swiftpro/link2:
           Alpha: 1
           Show Axes: false
           Show Trail: false
-          Value: true
+          Value: false
         turtlebot/swiftpro/link3:
           Alpha: 1
           Show Axes: false
           Show Trail: false
-          Value: true
+          Value: false
         turtlebot/swiftpro/link4:
           Alpha: 1
           Show Axes: false
           Show Trail: false
-          Value: true
+          Value: false
         turtlebot/swiftpro/link5:
           Alpha: 1
           Show Axes: false
           Show Trail: false
-          Value: true
+          Value: false
         turtlebot/swiftpro/link6:
           Alpha: 1
           Show Axes: false
           Show Trail: false
-          Value: true
+          Value: false
         turtlebot/swiftpro/link7:
           Alpha: 1
           Show Axes: false
           Show Trail: false
-          Value: true
+          Value: false
         turtlebot/swiftpro/link8A:
           Alpha: 1
           Show Axes: false
           Show Trail: false
-          Value: true
+          Value: false
         turtlebot/swiftpro/link8B:
           Alpha: 1
           Show Axes: false
           Show Trail: false
-          Value: true
+          Value: false
         turtlebot/swiftpro/link9:
           Alpha: 1
           Show Axes: false
           Show Trail: false
-          Value: true
+          Value: false
         turtlebot/swiftpro/manipulator_base_link:
           Alpha: 1
           Show Axes: false
@@ -215,8 +212,14 @@ Visualization Manager:
           Value: false
         camera_link:
           Value: false
-        odom:
-          Value: true
+        realsense_color_frame:
+          Value: false
+        realsense_color_optical_frame:
+          Value: false
+        realsense_depth_frame:
+          Value: false
+        realsense_depth_optical_frame:
+          Value: false
         realsense_link:
           Value: false
         turtlebot/base_footprint:
@@ -272,7 +275,7 @@ Visualization Manager:
         turtlebot/swiftpro/link8A:
           Value: false
         turtlebot/swiftpro/link8B:
-          Value: false
+          Value: true
         turtlebot/swiftpro/link9:
           Value: false
         turtlebot/swiftpro/manipulator_base_link:
@@ -284,42 +287,6 @@ Visualization Manager:
       Show Axes: true
       Show Names: true
       Tree:
-        odom:
-          turtlebot/kobuki/base_footprint:
-            turtlebot/kobuki/base_link:
-              turtlebot/kobuki/cliff_sensor_front_link:
-                {}
-              turtlebot/kobuki/cliff_sensor_left_link:
-                {}
-              turtlebot/kobuki/cliff_sensor_right_link:
-                {}
-              turtlebot/kobuki/imu:
-                {}
-              turtlebot/kobuki/plates_link:
-                realsense_link:
-                  {}
-                turtlebot/kobuki/rplidar:
-                  {}
-              turtlebot/kobuki/wheel_left_link:
-                {}
-              turtlebot/kobuki/wheel_right_link:
-                {}
-              turtlebot/swiftpro/manipulator_base_link:
-                turtlebot/swiftpro/link1:
-                  turtlebot/swiftpro/link2:
-                    turtlebot/swiftpro/link3:
-                      turtlebot/swiftpro/link8A:
-                        turtlebot/swiftpro/link8B:
-                          {}
-                        turtlebot/swiftpro/link9:
-                          {}
-                    turtlebot/swiftpro/link4:
-                      {}
-                  turtlebot/swiftpro/link5:
-                    {}
-                  turtlebot/swiftpro/link6:
-                    turtlebot/swiftpro/link7:
-                      {}
         turtlebot/base_footprint:
           turtlebot/base_link:
             turtlebot/cliff_sensor_front_link:
@@ -353,6 +320,46 @@ Visualization Manager:
                       {}
               turtlebot/rplidar:
                 {}
+        turtlebot/kobuki/base_footprint:
+          turtlebot/kobuki/base_link:
+            turtlebot/kobuki/cliff_sensor_front_link:
+              {}
+            turtlebot/kobuki/cliff_sensor_left_link:
+              {}
+            turtlebot/kobuki/cliff_sensor_right_link:
+              {}
+            turtlebot/kobuki/imu:
+              {}
+            turtlebot/kobuki/plates_link:
+              realsense_link:
+                realsense_color_frame:
+                  realsense_color_optical_frame:
+                    {}
+                realsense_depth_frame:
+                  realsense_depth_optical_frame:
+                    {}
+              turtlebot/kobuki/rplidar:
+                {}
+            turtlebot/kobuki/wheel_left_link:
+              {}
+            turtlebot/kobuki/wheel_right_link:
+              {}
+            turtlebot/swiftpro/manipulator_base_link:
+              turtlebot/swiftpro/link1:
+                turtlebot/swiftpro/link2:
+                  turtlebot/swiftpro/link3:
+                    turtlebot/swiftpro/link8A:
+                      turtlebot/swiftpro/link8B:
+                        {}
+                      turtlebot/swiftpro/link9:
+                        {}
+                  turtlebot/swiftpro/link4:
+                    {}
+                turtlebot/swiftpro/link5:
+                  {}
+                turtlebot/swiftpro/link6:
+                  turtlebot/swiftpro/link7:
+                    {}
       Update Interval: 0
       Value: true
     - Alpha: 1
@@ -540,7 +547,7 @@ Visualization Manager:
   Views:
     Current:
       Class: rviz/Orbit
-      Distance: 11.187464714050293
+      Distance: 9.640239715576172
       Enable Stereo Rendering:
         Stereo Eye Separation: 0.05999999865889549
         Stereo Focal Distance: 1
@@ -566,7 +573,7 @@ Window Geometry:
   Height: 2032
   Hide Left Dock: false
   Hide Right Dock: false
-  QMainWindow State: 000000ff00000000fd0000000400000000000001f7000006eafc020000000afb0000001200530065006c0065006300740069006f006e00000001e10000009b000000b000fffffffb0000001e0054006f006f006c002000500072006f007000650072007400690065007302000001ed000001df00000185000000b0fb000000120056006900650077007300200054006f006f02000001df000002110000018500000122fb000000200054006f006f006c002000500072006f0070006500720074006900650073003203000002880000011d000002210000017afb000000100044006900730070006c006100790073010000006e000006ea0000018200fffffffb0000002000730065006c0065006300740069006f006e00200062007500660066006500720200000138000000aa0000023a00000294fb00000014005700690064006500530074006500720065006f02000000e6000000d2000003ee0000030bfb0000000c004b0069006e0065006300740200000186000001060000030c00000261fb0000001e005200650061006c00730065006e0073006500200043006f006c006f00720000000180000000fb0000000000000000fb0000001e005200650061006c00730065006e0073006500200044006500700074006800000002090000018e000000000000000000000001000001ef000006eafc0200000005fb0000000a00440065007000740068000000006e0000035c0000000000000000fb00000006005200470042000000006e000006ea0000002600fffffffb0000001e0054006f006f006c002000500072006f00700065007200740069006500730100000041000000780000000000000000fb0000000a00560069006500770073000000003d0000035a0000013200fffffffb0000001200530065006c0065006300740069006f006e010000025a000000b200000000000000000000000200000490000000a9fc0100000001fb0000000a00560069006500770073030000004e00000080000002e100000197000000030000077d0000005efc0100000002fb0000000800540069006d006501000000000000077d000006dc00fffffffb0000000800540069006d006501000000000000045000000000000000000000057a000006ea00000004000000040000000800000008fc0000000100000002000000010000000a0054006f006f006c00730100000000ffffffff0000000000000000
+  QMainWindow State: 000000ff00000000fd00000004000000000000020a000006eafc020000000bfb0000001200530065006c0065006300740069006f006e00000001e10000009b000000b000fffffffb0000001e0054006f006f006c002000500072006f007000650072007400690065007302000001ed000001df00000185000000b0fb000000120056006900650077007300200054006f006f02000001df000002110000018500000122fb000000200054006f006f006c002000500072006f0070006500720074006900650073003203000002880000011d000002210000017afb000000100044006900730070006c006100790073010000006e000006ea0000018200fffffffb0000002000730065006c0065006300740069006f006e00200062007500660066006500720200000138000000aa0000023a00000294fb00000014005700690064006500530074006500720065006f02000000e6000000d2000003ee0000030bfb0000000c004b0069006e0065006300740200000186000001060000030c00000261fb0000001e005200650061006c00730065006e0073006500200043006f006c006f00720000000180000000fb0000000000000000fb0000001e005200650061006c00730065006e0073006500200044006500700074006800000002090000018e0000000000000000fb0000000a0049006d00610067006500000003a9000003af000000000000000000000001000001ef000006eafc0200000005fb0000000a00440065007000740068000000006e0000035c0000000000000000fb00000006005200470042000000006e000006ea0000002600fffffffb0000001e0054006f006f006c002000500072006f00700065007200740069006500730100000041000000780000000000000000fb0000000a00560069006500770073000000003d0000035a0000013200fffffffb0000001200530065006c0065006300740069006f006e010000025a000000b200000000000000000000000200000490000000a9fc0100000001fb0000000a00560069006500770073030000004e00000080000002e100000197000000030000077d0000005efc0100000002fb0000000800540069006d006501000000000000077d000006dc00fffffffb0000000800540069006d0065010000000000000450000000000000000000000567000006ea00000004000000040000000800000008fc0000000100000002000000010000000a0054006f006f006c00730100000000ffffffff0000000000000000
   RGB:
     collapsed: false
   Selection:

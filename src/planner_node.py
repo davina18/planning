@@ -20,13 +20,12 @@ class OnlinePlanner:
 #------------------------------------------- Initialisation ----------------------------------------------#
 
     def __init__(self, gridmap_topic, odom_topic, cmd_vel_topic, bounds, distance_threshold):
-
         # Initialise variables
-        self.svc = StateValidityChecker(distance_threshold)
+        self.svc = StateValidityChecker(0.13)
         self.current_pose = None
         self.goal = None
         self.at_goal = False
-        self.last_map_time = rospy.Time.now()
+        self.last_map_time = rospy.Time(0)
         self.bounds = bounds
         self.path = []
         self.tree = []
@@ -34,28 +33,29 @@ class OnlinePlanner:
         # Initialise motion planner parameters
         self.Kv = 0.5 #0.5
         self.Kw = 0.5 #1.2
-        self.v_max = 0.05 #0.3
+        self.v_max = 0.08 #0.3
         self.w_max = 0.5 #1.0
         self.distance_threshold = 0.1 #0.2
-
+        
         # Initialise robot parameters
         self.wheel_radius = 0.035
         self.wheel_base_distance = 0.257
+        
+        rospy.Timer(rospy.Duration(0.1), self.controller) # frequency to call controller()
 
         # Publishers
         self.cmd_pub = rospy.Publisher(cmd_vel_topic, Twist, queue_size=10)
-        self.marker_pub = rospy.Publisher('~path_marker', Marker, queue_size=1)
-        self.goal_marker_pub = rospy.Publisher('~goal_marker', Marker, queue_size=1)
-        self.tree_marker_pub = rospy.Publisher('tree', MarkerArray, queue_size=10)
+        self.marker_pub = rospy.Publisher('~path_marker', Marker, queue_size=1, latch=True)
+        self.goal_marker_pub = rospy.Publisher('~goal_marker', Marker, queue_size=1, latch=True)
+        self.tree_marker_pub = rospy.Publisher('tree', MarkerArray, queue_size=10, latch=True)
         self.atgoal_pub = rospy.Publisher('/at_goal', Bool, queue_size=10)
+        self.failedclusters_pub = rospy.Publisher('/failed_clusters', Bool, queue_size=10)
 
         # Subscribers
         self.gridmap_sub = rospy.Subscriber(gridmap_topic, OccupancyGrid, self.get_gridmap)
         self.odom_sub = rospy.Subscriber(odom_topic, Odometry, self.get_odom)
         self.move_goal_sub = rospy.Subscriber('/move_base_simple/goal', PoseStamped, self.goal_pose)
-
-
-        rospy.Timer(rospy.Duration(0.1), self.controller) # frequency to call controller()
+        #self.move_goal_sub = rospy.Timer(rospy.Duration(20.0), self.delayed_start, oneshot=True) # delayed start
 
 #------------------------------------------- Helper Functions ----------------------------------------------#
 
@@ -86,10 +86,10 @@ class OnlinePlanner:
         #print("odom yaw", yaw)  # Callback to check goal validity when a new goal is received
 
     def goal_pose(self, goal):
-        if self.current_pose is None:
-             return     # wait until odometry is received
-        
         if self.svc.there_is_map:
+            if self.current_pose is None:
+                return     # wait until odometry is received
+            
             self.goal = np.array([goal.pose.position.x, goal.pose.position.y])
             self.publish_goal_marker(self.goal) # publishes goal marker
             self.path = []
@@ -103,9 +103,12 @@ class OnlinePlanner:
         if self.current_pose is None:
             return  # wait until odometry is received
         
+        env = np.array(gridmap.data).reshape(gridmap.info.height, gridmap.info.width).T # convert map data to 2d array
+        origin = [gridmap.info.origin.position.x, gridmap.info.origin.position.y]
+        self.svc.set(env, gridmap.info.resolution, origin) # update svc with new map
+        
         self.current_map = gridmap # store the current map
-
-        if (gridmap.header.stamp - self.last_map_time).to_sec() > 1: # only update if its been more than 1 second
+        if (gridmap.header.stamp - self.last_map_time).to_sec() > 0.1: # only update if its been more than 1 second
             self.last_map_time = gridmap.header.stamp
             env = np.array(gridmap.data).reshape(gridmap.info.height, gridmap.info.width).T # convert map data to 2d array
             origin = [gridmap.info.origin.position.x, gridmap.info.origin.position.y]
@@ -114,7 +117,7 @@ class OnlinePlanner:
             # If a path exists
             if self.path is not None and len(self.path) > 0:
                 # Take a small part of the path with just the current pose and next two waypoints
-                path = [self.current_pose[:2]] + self.path[:2]
+                path = [self.current_pose[:2]] + self.path[:5]
                 # If that path is invalid, replan a new path
                 if not self.svc.check_path(path):
                     rospy.logwarn("[MAP] Path invalid after remappping. Replanning.")
@@ -135,6 +138,7 @@ class OnlinePlanner:
                      self.path = self.plan() # replan a new path
 
 #------------------------------------------- Fallback Functions ----------------------------------------------#     
+        
     def trap_avoidance(self):
         rospy.logwarn("[TRAP] Executing trap avoidance...")
 
@@ -153,7 +157,7 @@ class OnlinePlanner:
 
         best_theta = None
         max_clear_dist = 0.0
-
+        
         # Scan directions (in robot frame, not fixed world)
         for theta in np.linspace(0, 2*np.pi, 36, endpoint=False):
             dist = 0.0
@@ -243,8 +247,8 @@ class OnlinePlanner:
             self.trap_avoidance()  # Call trap avoidance
             # Clear the existing path and re-plan
             del self.path[:]
-            self.plan()
-    
+            plan = self.plan()
+            return plan
     
 
     def add_heading_to_path(self, path):
@@ -266,12 +270,16 @@ class OnlinePlanner:
         attempt = 0
         rospy.loginfo(f"[PLAN] Planning a path...")
 
-        while len(self.path) <= 1 and attempt < 6:
+        while len(self.path) <= 1 and attempt < 15:
             rospy.loginfo(f"[PLAN] Attempt {attempt + 1} to find a path.")
             if not self.svc.is_valid(self.current_pose[:2]):
                 rospy.logwarn("[PLAN] Current pose is invalid. Executing trap avoidance...")
-                self.check_again()
-                return []
+                result = self.check_again()
+                if not result:
+                    rospy.logwarn("Check again failed")
+                    return []
+                else:
+                    return result
 
             raw_path = compute_path(self.current_pose[:2], self.goal, self.svc, 1000)
             
@@ -290,8 +298,13 @@ class OnlinePlanner:
 
         if attempt == 3 or not self.path:
             rospy.logwarn("[PLAN] All attempts failed. Triggering trap avoidance ?.")
-            self.check_again()
-            return []
+            result = self.check_again()
+            if not result:
+                rospy.logwarn("Check again failed")
+                self.failedclusters_pub.publish(Bool(data=True))
+                return []
+            else:
+                return result
 
         rospy.loginfo("[PLAN] Path found!")
         self.at_goal = True
@@ -335,9 +348,6 @@ class OnlinePlanner:
                     return
             else:
                 # Calculate linear and angular velocities to move towards waypoint
-                #print("Angle error = ", abs(angle_err))
-                #print("Kv * dist = ", self.Kv * dist)
-                #print("v_max = ", self.v_max)
                 if abs(angle_err) > np.pi / 4:
                     #print("Angle err: ", angle_err)
                     v = 0.0
